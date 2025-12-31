@@ -26,7 +26,7 @@ using u32 = uint32_t;
 using u16 = uint16_t;
 using u8  = uint8_t;
 uint32_t PRIME24_LIMIT = 1u << 24; //1'000'000;//1u << 24;  // 16,777,216
-static constexpr size_t SEEN_MASK = 16383; // power of 2
+static constexpr size_t SEEN_MASK = (1u << 18) - 1; // 262143//static constexpr size_t SEEN_MASK = 16383; // power of 2
 array<u64, SEEN_MASK + 1> seen_stamp{};
 u64 cur_stamp = 1;
 
@@ -132,8 +132,8 @@ u64 SMALL_SIEVE_LIMIT = 1'000'000ULL;
 
 // FastQ prime reuse
 static constexpr size_t FASTQ_INIT_CAP = 49152;//49152;//49152;//4096
-static constexpr size_t FASTQ_RING_CAP = 12288;//12288;//1024
-static constexpr size_t WIN_CAP = 49152;//8192;
+static constexpr size_t FASTQ_RING_CAP = 16384;//12288;//1024
+static constexpr size_t WIN_CAP = 65536;//8192;
 
 // FastQ center-offset reuse
 static constexpr size_t FASTQ_D_CAP   =512; //256;
@@ -831,14 +831,15 @@ void run(u64 startN, u64 endN, int threads) {
 	
 	const u32 PRIME24_LIMIT = max<u32>(300'000, (endN - startN) / 1000);
 SIEVE_SCAN_LIMIT=PRIME24_LIMIT/2;
+//cout<<SIEVE_SCAN_LIMIT<<"\n";
 	SMALL_SIEVE_LIMIT= PRIME24_LIMIT;
 	
     build_small_sieve(is_prime_small, small_primes,primes_24);
-	vector<uint32_t> prime_24 ;
-	
+	vector<uint32_t> prime_24 ;//= build_base_primes(PRIME24_LIMIT);
+	//cout<<primes_24.size()<<"\n";
 u64 range_evens = ((endN - startN) >> 1) + 1;
 u64 num_blocks  = (range_evens + BLOCK_E - 1) / BLOCK_E;
-
+u64 ttt=endN-range_evens;
 
 vector<BlockStats> gstats(num_blocks);
 #ifdef _OPENMP
@@ -909,14 +910,38 @@ u32 d_used = 0;
             u64 mr_calls=0;
             u64 tt_seive=0;
 			u64 C = N >> 1;
-			
+			/*if ((
+    C < seg.L + SEG_HALF ||
+    C > seg.R - SEG_HALF) && N >= ttt && 1==2)
+{
+    u64 newL = (C > SEG_HALF) ? (C - SEG_HALF) : 0;
+    u64 newR = C + SEG_HALF;
+
+    build_segment(seg, newL, newR, prime_24);
+    seg_valid = true;
+    babarocks=true;
+}
+*/
             auto try_p = [&](u64 p) {		
 				
     if (p >= N) return false;
 
     u64 q = N - p;
  bool prime_adjacent=false;
-    
+    // === ACCELERATOR START ===
+    // Prime-adjacent heuristic: cheap signal only
+	/*if (q <= SMALL_SIEVE_LIMIT)
+	{
+     prime_adjacent =
+             // cheap only
+         (q > 2 && is_prime_small[q - 2]) ||
+		  (q > 4 && is_prime_small[q - 4]);
+	}
+	*/
+    // === ACCELERATOR END ===
+// Accelerator does NOT claim success.
+    // It only biases scan ordering implicitly by
+    // allowing FastQ's existing behavior to surface
     
     // Direct Goldbach success (unchanged semantics)
     if ((q <= SMALL_SIEVE_LIMIT && is_prime_small[q]) ||
@@ -928,7 +953,15 @@ u32 d_used = 0;
         have_last = true;
         return true;
     }
-
+/*
+    // nearby p's faster in subsequent iterations.
+    if (prime_adjacent ) {
+		fq.hint_win(p);   // <-- NOW IT ACTUALLY ACCELERATES
+		return false;
+        // no-op by design: signal only
+        // (future-safe hook if you later add stats)
+    }
+*/
     return false;
 };
 size_t scan_budget;
@@ -1014,7 +1047,94 @@ if (!found) {
                 }
             }
 	
-	if (found) {ok++;total++;continue;}		
+	if (found) {ok++;total++;continue;}
+	//cnt=0;
+	/* temp comment
+if (!found) {
+                for (size_t i =val ; cnt< SIEVE_SCAN_LIMIT; i--) {
+                    u64 p = primes_24[i];
+                   // if (p >= N ) break;//san temp added N/2
+                    u64 q = N - p;
+					if (q<= 0)
+					{
+						break;
+					}
+                    if ((q <= SMALL_SIEVE_LIMIT && is_prime_small[q]) ||
+                        (q > SMALL_SIEVE_LIMIT &&
+    ( !is_prime64(q)))) {
+                        fq.learn(q);
+						last_p = q;
+						witness_prime=q;
+                have_last = true;
+                        found = true;
+						
+                        break;
+                    }
+					cnt++;
+                }
+            }	
+if (found) {ok++;total++;continue;}
+*/			
+
+
+
+            // 3) Small-prime sieve scan (your existing stage)
+			/*
+            cnt=0;
+			
+			if (!found) {
+                for (size_t i = 2; i< SIEVE_SCAN_LIMIT && i < small_primes.size(); i++) {
+                    u64 p = small_primes[i];
+                    if (p >= N) break;
+                    u64 q = N - p;
+                    if ((q <= SMALL_SIEVE_LIMIT && is_prime_small[q]) ||
+                        (q > SMALL_SIEVE_LIMIT &&
+    ( !is_prime64(q)))) {
+                        fq.learn(q);
+						last_p = q;
+						witness_prime=q;
+						
+                have_last = true;
+                        found = true;
+                        break;
+                    }
+					
+                }
+            }
+			*/
+			 // 3) Small-prime sieve scan (your existing stage)
+			// cnt=0;
+//if (found) {ok++;total++;continue;}	
+	
+	/*
+	if (!found) {
+                for (size_t i =small_primes.size()-1 ; cnt< SIEVE_SCAN_LIMIT; i--) {
+                    u64 p = small_primes[i];
+                   // if (p >= N ) break;//san temp added N/2
+                    u64 q = N - p;
+					if (q<= 0)
+					{
+						break;
+					}
+                    if ((q <= SMALL_SIEVE_LIMIT && is_prime_small[q]) ||
+                        (q > SMALL_SIEVE_LIMIT &&
+    ( !is_prime64(q)))) {
+                        fq.learn(q);
+						last_p = q;
+						witness_prime=q;
+                have_last = true;
+                        found = true;
+						
+                        break;
+                    }
+					cnt++;
+                }
+            }	
+if (found) {ok++;total++;continue;}		
+*/
+		
+             
+			
 			
             // 4) Δd fallback (now learns drift into both buckets on success)
             if (!found && dd_scan(N, fq, DELTA_WINDOW_NORMAL, is_prime_small,
@@ -1048,6 +1168,10 @@ if (!found) {
 	
 	
 	
+    
+//u64 d_used = abs_diff_u64(witness_prime, C);
+
+//drift_blocks[block_id].add(d);
    if (d_used && d_used <= DELTA_WINDOW_EMERGENCY)
     local_gstats[block_id].add(d_used);
 #endif
@@ -1079,6 +1203,8 @@ total++;
     printf("[Δ-PROD] Cycles/N (total-core): %.1f\n",
            (double)total_cycles / (double)(total ? total : 1));
 		   
+    //cout<<"Total MR calls"<<total_mr_calls<<"\n"	;
+	//cout<<"Total Seive calls"<<tot_sieve<<"\n"	;
 #if ENABLE_DRIFT_STATS
 
 		   printf("\n[DRIFT] Block-level drift stats (BLOCK_E=%llu evens)\n",
